@@ -10,20 +10,140 @@ A local, deterministic, PyCharm-style Python formatter for VS Code. It uses Tree
 - **Never corrupts your code**: anything the formatter doesn't understand is preserved verbatim, and a re-parse safety net falls back to your original text if formatting would ever introduce a syntax error. Backed by property tests (*valid stays valid*, *idempotent*, *never worsens broken code*).
 - **Local, deterministic, WASM-powered**: built on `@vscode/tree-sitter-wasm` — fast, fully offline, with zero external Python dependencies (no `black`, `autopep8`, or `yapf` needed).
 
+## ⚖️ How It Compares to Black
+
+[Black](https://black.readthedocs.io/) is the gold standard for formatting Python that **already parses**. This formatter targets the case Black refuses — code that doesn't parse — and is intentionally more conservative on valid code. The two are complementary.
+
+> The **This formatter** column is real output from the test suite. The **Black** column reflects Black's documented, standard behavior.
+
+### ✅ What this formatter can do that Black can't
+
+Black builds a strict syntax tree first; if the file doesn't parse it **refuses and changes nothing** (`error: cannot format …: Cannot parse`). Because Tree-sitter recovers from errors, this formatter formats what it can and repairs what it safely can.
+
+**Reindent invalid Python** (inconsistent indentation is an `IndentationError`, so the input below does not parse):
+
+```python
+# input                         # this formatter
+for i in range(10):             for i in range(10):
+  print(i)                          print(i)
+   if i == 5:                       if i == 5:
+   break                                break
+```
+> **Black:** ❌ refuses — `Cannot parse`.
+
+**Repair a missing colon, then format:**
+
+```python
+# input                         # this formatter
+def add(a, b)                   def add(a, b):
+    return a + b                    return a + b
+```
+> **Black:** ❌ refuses — `Cannot parse`.
+
+**Format the valid parts and leave an unfinished region untouched** (e.g. mid-edit):
+
+```python
+# input                         # this formatter
+import os                       import os
+x=1+2                           x = 1 + 2
+val = compute(1,2               val = compute(1,2     ← preserved verbatim
+y=3                             y=3
+```
+> **Black:** ❌ refuses the entire file — `Cannot parse`.
+
+### ⬛ What Black can do that this formatter can't
+
+On code that already parses, Black does more. These are real differences:
+
+| Feature | Input | This formatter | Black |
+|---|---|---|---|
+| Quote normalization | `name = 'world'` | `name = 'world'` | `name = "world"` |
+| Numeric literals | `x = 0XFF` | `x = 0XFF` | `x = 0xFF` |
+| String prefixes | `s = F"hi"` | `s = F"hi"` | `s = f"hi"` |
+| Power-operator hugging | `x = 2**8` | `x = 2 ** 8` | `x = 2**8` |
+| Slice spacing (complex operands) | `ham[lower + offset:upper + offset]` | `ham[lower + offset:upper + offset]` | `ham[lower + offset : upper + offset]` |
+| Redundant parens | `return (value)` | `return (value)` | `return value` |
+
+**Magic trailing comma** — a trailing comma tells Black to keep a collection exploded; this formatter simply drops it:
+
+```python
+# input:  data = [1, 2, 3,]
+
+data = [1, 2, 3]          # ← this formatter (drops the redundant comma)
+
+data = [                  # ← Black (trailing comma forces one-per-line)
+    1,
+    2,
+    3,
+]
+```
+
+**Wrapping long operator chains** — this formatter only wraps *bracketed* groups (calls, collections, parameter lists); a long boolean / arithmetic / comparison chain is left over-width, whereas Black parenthesizes it:
+
+```python
+# input (92 columns)
+result = alpha_one and beta_two and gamma_three and delta_four and epsilon_five and zeta_six
+
+# this formatter → unchanged, still 92 columns ❌
+
+# Black →
+result = (
+    alpha_one and beta_two and gamma_three and delta_four and epsilon_five and zeta_six
+)
+```
+
+### Bottom line
+
+Use Black (or Ruff) for everyday formatting of valid code — they do more and are battle-tested. Reach for this formatter when the code **doesn't parse yet**: while you're mid-edit, or to safely tidy a file with a syntax error that Black would reject outright.
+
 ## 🛠️ How It Works
 
-The extension uses a multi-stage pipeline to format your code:
+Formatting runs as a pipeline. Two rules hold it together — **format what you understand, copy everything else verbatim**, and **never emit code that parses worse than the input** — and they're enforced at the *edges* of the pipeline (the parse/repair front and the safety-net back), so the formatting logic in the middle can stay simple.
 
-1. **Parsing (`ParserService.ts`)**: 
-   When you trigger a format, the raw code is passed to Tree-sitter (running via WebAssembly). Tree-sitter produces an Abstract Syntax Tree (AST) representing the structure of your code.
-2. **Context Management (`Context.ts`)**: 
-   A stateful context tracks indentation levels and pending blank lines. This ensures strict adherence to rules like "two blank lines between top-level function definitions."
-3. **AST Traversal (`Printer.ts`)**: 
-   A recursive visitor walks the Tree-sitter AST and prints each supported node type (`function_definition`, `binary_operator`, `list`, etc.) with PEP-8 spacing, wrapping bracketed groups that don't fit the line width. Nodes without a dedicated handler fall back to lossless passthrough (see below).
-4. **Repair (`Repairer.ts`)**: 
-   When the input has parse errors, a pre-pass attempts targeted, deterministic fixes (e.g. inserting a missing colon after a compound header). Each candidate edit is applied to a copy, re-parsed, and kept only if it strictly reduces the number of parse errors — otherwise it's reverted. This makes repair safe by construction.
-5. **Lossless passthrough & safety net (`Printer.ts` & `Formatter.ts`)**: 
-   The `Printer` only reformats nodes it has a tested handler for; everything else (including Tree-sitter `ERROR` nodes) is emitted as its original source text, so broken or unsupported code is never deleted or mangled. As a final guard, `Formatter` re-parses its own output and falls back to the original text if formatting would ever introduce a syntax error.
+```text
+                    ┌──── has errors? ────┐
+  source ──▶ parse ─┤                     ├─▶ print ──▶ re-parse & compare ──▶ output
+            (Tree-  └─▶ repair ─▶ re-parse┘  (visitor +  (revert to original
+             sitter)    (verify-or-revert)    Context)    if it parses worse)
+```
+
+### 1. Parse — `ParserService.ts`
+
+The source is parsed by Tree-sitter, compiled to WebAssembly. The property that makes this whole project possible is that Tree-sitter is **error-recovering**: it returns a usable syntax tree even for code that doesn't compile, isolating the parts it can't make sense of as `ERROR` nodes. (Black, autopep8, and yapf use strict parsers and simply refuse a file that won't parse.) The parser is initialized once and reused for every format.
+
+### 2. Repair — `Repairer.ts` (only when the input is broken)
+
+If the tree has errors and `repairSyntax` is enabled, a repair pre-pass runs. The non-obvious part: Tree-sitter does **not** hand you a tidy "missing colon here" marker. For input like `if x` (no colon) it collapses the entire construct into one flat `ERROR` node and discards the block structure — so there is nothing in the *tree* to patch. Repair therefore works on the **source text**:
+
+1. Find each line whose first token is a compound-statement keyword (`if`, `elif`, `else`, `for`, `while`, `def`, `class`, `try`, `except`, `finally`, `with`, `async`) and that doesn't already end in `:`.
+2. Try appending a `:` (before any trailing comment).
+3. **Re-parse and count errors.** Keep the edit *only if the `ERROR`/`MISSING` count strictly drops*; otherwise revert it.
+
+This **verify-or-revert** loop is what makes repair safe: a wrong guess can never make the code worse, and genuinely ambiguous breakage (an unclosed bracket, a half-typed line) reduces no errors and is left untouched. The improved source is then re-parsed for the printing stage.
+
+### 3. Print — `Printer.ts` + `Context.ts`
+
+A recursive visitor (`Printer.printNode`) walks the tree and writes into a `FormatterContext`. This is where the PEP-8 shaping happens.
+
+**The output model (`Context.ts`).** Rather than writing newlines immediately and trimming later, the context tracks *pending* newlines as a **count** and flushes them only when the next real content is written. Requests take the **maximum**, never the sum: `newline()` (1), `emptyLine()` (one blank line), and `twoBlankLines()` (PEP-8 separation around top-level defs) combine to the strongest request instead of stacking. Indentation is applied at flush time from a structural depth counter (`indent()` / `dedent()`) — so the input's own indentation is **ignored and rebuilt from tree depth**, which is exactly why tabs, mixed, or inconsistent indentation all normalize for free.
+
+**Spacing & statement layout.** Each node type has a handler: binary/boolean/comparison operators are surrounded by spaces; `:` and `,` get a space *after* but not before; `=` is hugged in `f(x=1)` but spaced in annotated form `x: int = 1`; comprehensions space-separate their `for`/`in`/`if` clauses; and so on. `printStatements` lays out a module or block body — it splits `;`-joined statements onto their own lines, keeps an inline `# comment` attached to the row it was written on, preserves author blank lines (capped at 2 top-level / 1 nested, by comparing source row numbers), and enforces the 2-/1-blank-line rule around definitions.
+
+**Line wrapping.** When `maxLineLength` is finite, a bracketed group (call arguments, `list`/`dict`/`set`/`tuple`, parameter lists) is **measured flat first**: it is rendered into a throwaway context, and if `currentColumn + flatWidth` (plus a trailing `:` for a `def`/`class` header) exceeds the limit, the group is *exploded* — one element per line, closing bracket dedented back to the statement. Because the decision is purely width-driven, an already-exploded group collapses back to a single line when it fits, which keeps the formatter idempotent. (Operator chains like `a and b and …` are not wrapped yet — see the comparison above.)
+
+**Lossless passthrough — the safety-critical default.** Any node type *without* a dedicated handler — and every `ERROR` node — hits the `default` case, which emits the node's **original source text** instead of rebuilding it from its children. This single rule is what guarantees "never mangle": an unsupported or broken construct comes out byte-for-byte unchanged rather than being silently corrupted by a generic "concatenate the children" path. (It is also the root-cause fix for the original bugs — a comprehension with no handler used to become `[afor a in items]`; now it is copied verbatim until a real handler exists.)
+
+### 4. Safety net — `Formatter.ts`
+
+After printing, the output is **re-parsed** and its error count compared with the original input's. If formatting somehow *increased* the count — i.e. introduced a syntax error — the formatter discards its own output and returns the original text unchanged. Combined with lossless passthrough, this makes corruption **structurally impossible**: the worst case is "this region wasn't reformatted," never "this code is now broken."
+
+### The guarantees, in one place
+
+- **Never corrupts** — output always parses at least as well as the input (stage 4), and anything not understood is preserved verbatim (stage 3).
+- **Idempotent** — `format(format(x)) == format(x)`; indentation and wrapping are *derived* each run, never accumulated.
+- **Deterministic & local** — no AI, no network; identical input always yields identical output.
+
+All three are locked in by property tests in `test_runner.js` (*never corrupts valid code*, *idempotent*, *never worsens broken code*).
 
 ## 💻 How to Use
 
