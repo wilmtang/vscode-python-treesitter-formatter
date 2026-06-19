@@ -353,4 +353,266 @@ describe('E2E: Error-Tolerant Python Formatter', () => {
         const result = await formatViaVSCode("print('hello','world')");
         assert.strictEqual(result, "print('hello', 'world')\n");
     });
+
+    // ─────────────────────────────────────────────────────────────
+    //  REALISTIC PYTHON THE ORIGINAL SUITE AVOIDED
+    //
+    //  The cases above only exercise the handful of constructs the
+    //  formatter happens to get right. The cases below cover everyday
+    //  Python — comprehensions, lambdas, type annotations, inline
+    //  comments, semicolons, blank-line and line-length handling.
+    //
+    //  Each `expected` value encodes the CORRECT PEP-8 output (verified
+    //  to be valid Python). Several of these currently FAIL — that is
+    //  intentional: they pin down the defects found in the audit so they
+    //  can be fixed, rather than codifying the corrupted output as
+    //  "expected". A few (e.g. collapsing a short multi-line call) pass
+    //  today and guard against regressions.
+    // ─────────────────────────────────────────────────────────────
+
+    it('keeps inline (trailing) comments on the same line', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('x = 1  # set x to one\ny = 2  # and y');
+        assert.strictEqual(result, 'x = 1  # set x to one\ny = 2  # and y\n');
+    });
+
+    it('formats a list comprehension without corrupting it', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('y = [a for a in items]');
+        assert.strictEqual(result, 'y = [a for a in items]\n');
+    });
+
+    it('formats a dict comprehension without corrupting it', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('x = {k: v for k, v in items}');
+        assert.strictEqual(result, 'x = {k: v for k, v in items}\n');
+    });
+
+    it('formats a generator expression in a call without corrupting it', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('total = sum(x for x in nums)');
+        assert.strictEqual(result, 'total = sum(x for x in nums)\n');
+    });
+
+    it('preserves the lambda keyword', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('f = lambda x: x + 1');
+        assert.strictEqual(result, 'f = lambda x: x + 1\n');
+    });
+
+    it('splits semicolon-separated statements onto their own lines', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('x = 1; y = 2; z = 3');
+        assert.strictEqual(result, 'x = 1\ny = 2\nz = 3\n');
+    });
+
+    it('formats a variable annotation (space after colon, spaces around =)', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('count: int = 0');
+        assert.strictEqual(result, 'count: int = 0\n');
+    });
+
+    it('formats annotated parameters and annotated defaults', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode(
+            'def f(x:int, y:str="a") -> bool:\n    return True'
+        );
+        assert.strictEqual(
+            result,
+            'def f(x: int, y: str = "a") -> bool:\n    return True\n'
+        );
+    });
+
+    it('spaces commas in a bare (unparenthesized) tuple', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('a, b = b, a');
+        assert.strictEqual(result, 'a, b = b, a\n');
+    });
+
+    it('does not leave a stray space at a trailing comma', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('x = [1, 2, 3,]');
+        assert.strictEqual(result, 'x = [1, 2, 3]\n');
+    });
+
+    it('collapses multiple blank lines inside a function body to one', async function () {
+        this.timeout(30000);
+        const input = [
+            'def f():',
+            '    x = 1',
+            '',
+            '',
+            '    y = 2',
+            '    return x + y',
+        ].join('\n');
+        const expected = [
+            'def f():',
+            '    x = 1',
+            '',
+            '    y = 2',
+            '    return x + y',
+            '',
+        ].join('\n');
+        const result = await formatViaVSCode(input);
+        assert.strictEqual(result, expected);
+    });
+
+    it('collapses a short multi-line call that fits on one line', async function () {
+        this.timeout(30000);
+        const input = [
+            'foo(',
+            '    a,',
+            '    b,',
+            '    c',
+            ')',
+        ].join('\n');
+        const result = await formatViaVSCode(input);
+        assert.strictEqual(result, 'foo(a, b, c)\n');
+    });
+
+    it('keeps every line within the PEP-8 max line length (79 cols)', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode(
+            'result = some_function(argument_one, argument_two, argument_three, argument_four, argument_five)'
+        );
+        const tooLong = result.split('\n').filter(line => line.length > 79);
+        assert.deepStrictEqual(
+            tooLong,
+            [],
+            `Expected no lines longer than 79 chars, but found: ${JSON.stringify(tooLong)}`
+        );
+    });
+
+    it('formats a realistic class with a comprehension and inline comment', async function () {
+        this.timeout(30000);
+        const input = [
+            'class Config:',
+            '    def load(self,items):',
+            '        result={k:v for k,v in items}  # build map',
+            '        return result',
+        ].join('\n');
+        const expected = [
+            'class Config:',
+            '    def load(self, items):',
+            '        result = {k: v for k, v in items}  # build map',
+            '        return result',
+            '',
+        ].join('\n');
+        const result = await formatViaVSCode(input);
+        assert.strictEqual(result, expected);
+    });
+
+    // ─────────────────────────────────────────────────────────────
+    //  REINDENTATION (structural repair)
+    //
+    //  Whenever tree-sitter recovers a clean tree, indentation is rebuilt
+    //  purely from structural depth, so any input indentation normalizes to
+    //  the editor's indent size.
+    // ─────────────────────────────────────────────────────────────
+
+    it('reindents tab-indented code to spaces', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('def f():\n\treturn 1');
+        assert.strictEqual(result, 'def f():\n    return 1\n');
+    });
+
+    it('reindents over-indented code (8 spaces -> 4)', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('def f():\n        return 1');
+        assert.strictEqual(result, 'def f():\n    return 1\n');
+    });
+
+    it('reindents under-indented code (2 spaces -> 4)', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('if x:\n  pass');
+        assert.strictEqual(result, 'if x:\n    pass\n');
+    });
+
+    it('reindents mixed tabs and spaces', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('def f():\n\tif x:\n\t\treturn 1');
+        assert.strictEqual(result, 'def f():\n    if x:\n        return 1\n');
+    });
+
+    it('reindents a tab-indented class body', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('class C:\n\tx = 1\n\ty = 2');
+        assert.strictEqual(result, 'class C:\n    x = 1\n    y = 2\n');
+    });
+
+    // ─────────────────────────────────────────────────────────────
+    //  SYNTAX REPAIR (missing colon, verify-or-revert)
+    //
+    //  Goes beyond Black/autopep8: these inputs do NOT parse, but a missing
+    //  colon after a compound header is unambiguous and verifiable, so we
+    //  repair it before formatting. Unrepairable breakage is left untouched.
+    // ─────────────────────────────────────────────────────────────
+
+    it('repairs a missing colon after def', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('def f()\n    return 1');
+        assert.strictEqual(result, 'def f():\n    return 1\n');
+    });
+
+    it('repairs a missing colon after if', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('if x > 0\n    pass');
+        assert.strictEqual(result, 'if x > 0:\n    pass\n');
+    });
+
+    it('repairs a missing colon after for', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('for i in range(3)\n    print(i)');
+        assert.strictEqual(result, 'for i in range(3):\n    print(i)\n');
+    });
+
+    it('repairs a missing colon after class', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('class C\n    pass');
+        assert.strictEqual(result, 'class C:\n    pass\n');
+    });
+
+    it('repairs one bad header amid otherwise good code', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('x = 1\ndef f()\n    return x\ny = 2');
+        assert.strictEqual(result, 'x = 1\n\n\ndef f():\n    return x\n\n\ny = 2\n');
+    });
+
+    it('leaves genuinely unrepairable code untouched (no corruption)', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('x = foo(1, 2');
+        assert.strictEqual(result, 'x = foo(1, 2\n');
+    });
+
+    // ─────────────────────────────────────────────────────────────
+    //  LINE WRAPPING (max line length — extension default is 88)
+    // ─────────────────────────────────────────────────────────────
+
+    it('wraps a call that exceeds the max line length', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode(
+            'result = some_function(argument_one, argument_two, argument_three, argument_four, argument_five)'
+        );
+        assert.strictEqual(
+            result,
+            'result = some_function(\n    argument_one,\n    argument_two,\n    argument_three,\n    argument_four,\n    argument_five\n)\n'
+        );
+    });
+
+    it('wraps a long parameter list', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode(
+            'def process(first_argument, second_argument, third_argument, fourth_argument, fifth_arg):\n    pass'
+        );
+        assert.strictEqual(
+            result,
+            'def process(\n    first_argument,\n    second_argument,\n    third_argument,\n    fourth_argument,\n    fifth_arg\n):\n    pass\n'
+        );
+    });
+
+    it('keeps a short call flat', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('result = f(a, b, c)');
+        assert.strictEqual(result, 'result = f(a, b, c)\n');
+    });
 });

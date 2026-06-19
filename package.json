@@ -22,6 +22,16 @@
           "type": "number",
           "default": 4,
           "description": "Number of spaces for indentation"
+        },
+        "treesitterFormatter.repairSyntax": {
+          "type": "boolean",
+          "default": true,
+          "description": "Attempt to repair common syntax errors (e.g. a missing colon after an 'if'/'for'/'def' header) before formatting. Every repair is verified by re-parsing and only kept if it reduces syntax errors, so it never makes code worse."
+        },
+        "treesitterFormatter.maxLineLength": {
+          "type": "number",
+          "default": 88,
+          "description": "Maximum line length. Bracketed constructs (calls, collections, parameter lists) that would exceed this width are wrapped one element per line. Common values: 79 (strict PEP-8), 88 (Black), 120 (PyCharm)."
         }
       }
     }

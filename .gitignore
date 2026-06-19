@@ -1,6 +1,33 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Node
 node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build outputs
 out/
 dist/
+build/
+
+# Tests
 .vscode-test/
 .test-user-data/
+coverage/
+.nyc_output/
+
+# Logs
 *.log
+
+# Extension packages
+*.vsix
+
+# Environment variables
+.env
+.env.local
+.env.*.local

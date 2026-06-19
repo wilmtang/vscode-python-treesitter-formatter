@@ -29,8 +29,30 @@ export class FormatterContext {
   /** Whether we've written any content at all yet. */
   private hasContent = false;
 
-  constructor(indentSize: number = 4) {
+  /** Maximum line width before wrappable constructs are exploded. */
+  public readonly maxWidth: number;
+
+  constructor(indentSize: number = 4, maxWidth: number = Number.POSITIVE_INFINITY) {
     this.indentSize = indentSize;
+    this.maxWidth = maxWidth;
+  }
+
+  public getIndentSize(): number {
+    return this.indentSize;
+  }
+
+  /** Raw output buffer with no trailing-newline normalization — used for measuring. */
+  public getRaw(): string {
+    return this.output;
+  }
+
+  /** The column where the next written character will land. */
+  public currentColumn(): number {
+    if (this.pendingNewlines > 0) {
+      return this.indentLevel * this.indentSize;
+    }
+    const lastNewline = this.output.lastIndexOf('\n');
+    return this.output.length - (lastNewline + 1);
   }
 
   /**
@@ -75,6 +97,23 @@ export class FormatterContext {
    */
   public newline(): void {
     this.pendingNewlines = Math.max(this.pendingNewlines, 1);
+  }
+
+  /**
+   * Write an inline (trailing) comment on the current line: cancel any pending
+   * newline, ensure exactly two spaces before it (PEP-8), write it, then start a
+   * new line. Used to keep `x = 1  # note` together instead of pushing the
+   * comment onto its own line.
+   */
+  public trailingComment(text: string): void {
+    this.pendingNewlines = 0;
+    if (this.output.length > 0 && !this.output.endsWith('\n')) {
+      this.output = this.output.replace(/[ \t]+$/, '');
+      this.output += '  ';
+    }
+    this.output += text;
+    this.hasContent = true;
+    this.newline();
   }
 
   /**

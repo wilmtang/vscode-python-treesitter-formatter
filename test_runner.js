@@ -213,6 +213,200 @@ async function runTests() {
       input: "print('hello','world')",
       expected: "print('hello', 'world')\n"
     },
+    //
+    // ─── REALISTIC PYTHON (mirrors the E2E suite) ───────────────
+    //
+    {
+      name: 'keeps inline (trailing) comments on the same line',
+      input: 'x = 1  # set x to one\ny = 2  # and y',
+      expected: 'x = 1  # set x to one\ny = 2  # and y\n'
+    },
+    {
+      name: 'formats a list comprehension without corrupting it',
+      input: 'y = [a for a in items]',
+      expected: 'y = [a for a in items]\n'
+    },
+    {
+      name: 'formats a dict comprehension without corrupting it',
+      input: 'x = {k: v for k, v in items}',
+      expected: 'x = {k: v for k, v in items}\n'
+    },
+    {
+      name: 'formats a generator expression in a call',
+      input: 'total = sum(x for x in nums)',
+      expected: 'total = sum(x for x in nums)\n'
+    },
+    {
+      name: 'preserves the lambda keyword',
+      input: 'f = lambda x: x + 1',
+      expected: 'f = lambda x: x + 1\n'
+    },
+    {
+      name: 'splits semicolon-separated statements',
+      input: 'x = 1; y = 2; z = 3',
+      expected: 'x = 1\ny = 2\nz = 3\n'
+    },
+    {
+      name: 'formats a variable annotation',
+      input: 'count: int = 0',
+      expected: 'count: int = 0\n'
+    },
+    {
+      name: 'formats annotated parameters and defaults',
+      input: 'def f(x:int, y:str="a") -> bool:\n    return True',
+      expected: 'def f(x: int, y: str = "a") -> bool:\n    return True\n'
+    },
+    {
+      name: 'spaces commas in a bare tuple',
+      input: 'a, b = b, a',
+      expected: 'a, b = b, a\n'
+    },
+    {
+      name: 'drops a redundant trailing comma',
+      input: 'x = [1, 2, 3,]',
+      expected: 'x = [1, 2, 3]\n'
+    },
+    {
+      name: 'collapses multiple blank lines in a body to one',
+      input: 'def f():\n    x = 1\n\n\n    y = 2\n    return x + y',
+      expected: 'def f():\n    x = 1\n\n    y = 2\n    return x + y\n'
+    },
+    {
+      name: 'collapses a short multi-line call',
+      input: 'foo(\n    a,\n    b,\n    c\n)',
+      expected: 'foo(a, b, c)\n'
+    },
+    {
+      name: 'formats a realistic class with comprehension + comment',
+      input: 'class Config:\n    def load(self,items):\n        result={k:v for k,v in items}  # build map\n        return result',
+      expected: 'class Config:\n    def load(self, items):\n        result = {k: v for k, v in items}  # build map\n        return result\n'
+    },
+    //
+    // ─── REINDENTATION (structural repair) ──────────────────────
+    //
+    {
+      name: 'reindents tab-indented code to spaces',
+      input: 'def f():\n\treturn 1',
+      expected: 'def f():\n    return 1\n'
+    },
+    {
+      name: 'reindents over-indented code (8 spaces -> 4)',
+      input: 'def f():\n        return 1',
+      expected: 'def f():\n    return 1\n'
+    },
+    {
+      name: 'reindents under-indented code (2 spaces -> 4)',
+      input: 'if x:\n  pass',
+      expected: 'if x:\n    pass\n'
+    },
+    {
+      name: 'reindents mixed tabs and spaces',
+      input: 'def f():\n\tif x:\n\t\treturn 1',
+      expected: 'def f():\n    if x:\n        return 1\n'
+    },
+    {
+      name: 'reindents a tab-indented class body',
+      input: 'class C:\n\tx = 1\n\ty = 2',
+      expected: 'class C:\n    x = 1\n    y = 2\n'
+    },
+    {
+      name: 'respects a custom indent size (2 spaces)',
+      input: 'def f():\n    if x:\n        return 1',
+      indentSize: 2,
+      expected: 'def f():\n  if x:\n    return 1\n'
+    },
+    //
+    // ─── SYNTAX REPAIR (missing colon, verify-or-revert) ────────
+    //
+    {
+      name: 'repairs a missing colon after def',
+      input: 'def f()\n    return 1',
+      expected: 'def f():\n    return 1\n'
+    },
+    {
+      name: 'repairs a missing colon after if',
+      input: 'if x > 0\n    pass',
+      expected: 'if x > 0:\n    pass\n'
+    },
+    {
+      name: 'repairs a missing colon after for',
+      input: 'for i in range(3)\n    print(i)',
+      expected: 'for i in range(3):\n    print(i)\n'
+    },
+    {
+      name: 'repairs a missing colon after while',
+      input: 'while x\n    x -= 1',
+      expected: 'while x:\n    x -= 1\n'
+    },
+    {
+      name: 'repairs a missing colon after class',
+      input: 'class C\n    pass',
+      expected: 'class C:\n    pass\n'
+    },
+    {
+      name: 'repairs a missing colon after else',
+      input: 'if x:\n    a = 1\nelse\n    a = 2',
+      expected: 'if x:\n    a = 1\nelse:\n    a = 2\n'
+    },
+    {
+      name: 'repairs a missing colon after async def',
+      input: 'async def f()\n    return 1',
+      expected: 'async def f():\n    return 1\n'
+    },
+    {
+      name: 'repairs one bad header amid otherwise good code',
+      input: 'x = 1\ndef f()\n    return x\ny = 2',
+      expected: 'x = 1\n\n\ndef f():\n    return x\n\n\ny = 2\n'
+    },
+    {
+      name: 'does not invent a colon on a non-header line',
+      input: 'match = re.search(p, s)',
+      expected: 'match = re.search(p, s)\n'
+    },
+    {
+      name: 'leaves missing colon alone when repair is disabled',
+      input: 'def f()\n    return 1',
+      repairSyntax: false,
+      expected: 'def f()\n    return 1\n'
+    },
+    //
+    // ─── LINE WRAPPING (max line length) ────────────────────────
+    //
+    {
+      name: 'does not wrap by default (no max line length)',
+      input: 'result = some_function(argument_one, argument_two, argument_three, argument_four, argument_five)',
+      expected: 'result = some_function(argument_one, argument_two, argument_three, argument_four, argument_five)\n'
+    },
+    {
+      name: 'wraps a call that exceeds the max line length',
+      input: 'result = some_function(argument_one, argument_two, argument_three, argument_four, argument_five)',
+      maxLineLength: 88,
+      expected: 'result = some_function(\n    argument_one,\n    argument_two,\n    argument_three,\n    argument_four,\n    argument_five\n)\n'
+    },
+    {
+      name: 'keeps a short call flat under the max line length',
+      input: 'result = f(a, b, c)',
+      maxLineLength: 88,
+      expected: 'result = f(a, b, c)\n'
+    },
+    {
+      name: 'wraps a long parameter list (accounts for trailing colon)',
+      input: 'def process(first_argument, second_argument, third_argument, fourth_argument, fifth_arg):\n    pass',
+      maxLineLength: 88,
+      expected: 'def process(\n    first_argument,\n    second_argument,\n    third_argument,\n    fourth_argument,\n    fifth_arg\n):\n    pass\n'
+    },
+    {
+      name: 'explodes the outer call but keeps fitting inner calls flat',
+      input: 'result = outer_function(inner_function(a, b), another_inner(c, d), yet_more(e, f), final(g))',
+      maxLineLength: 88,
+      expected: 'result = outer_function(\n    inner_function(a, b),\n    another_inner(c, d),\n    yet_more(e, f),\n    final(g)\n)\n'
+    },
+    {
+      name: 'wraps kwargs/splat without a trailing comma after **kwargs',
+      input: 'configure(name=value, other=thing, *more_args, debug=True, verbose=False, **all_the_kwargs)',
+      maxLineLength: 88,
+      expected: 'configure(\n    name=value,\n    other=thing,\n    *more_args,\n    debug=True,\n    verbose=False,\n    **all_the_kwargs\n)\n'
+    },
   ];
 
   let passed = 0;
@@ -220,16 +414,119 @@ async function runTests() {
 
   for (const tc of testCases) {
     try {
-      const actual = Formatter.format(tc.input);
+      const actual = Formatter.format(tc.input, tc.indentSize, tc.repairSyntax, tc.maxLineLength);
       assert.strictEqual(actual, tc.expected);
       console.log(`  ✅ ${tc.name}`);
       passed++;
     } catch (err) {
       console.error(`  ❌ ${tc.name}`);
       console.error(`     Expected: ${JSON.stringify(tc.expected)}`);
-      console.error(`     Actual:   ${JSON.stringify(Formatter.format(tc.input))}`);
+      console.error(`     Actual:   ${JSON.stringify(Formatter.format(tc.input, tc.indentSize, tc.repairSyntax, tc.maxLineLength))}`);
       failed++;
     }
+  }
+
+  //
+  // ─── PROPERTY TESTS (M0 safety invariants) ──────────────────
+  //
+  // Unlike the cases above, these don't assert an exact output. They assert
+  // invariants that must hold for EVERY input — this is how we guarantee the
+  // formatter never corrupts code, regardless of which constructs it supports.
+  //
+  console.log('\n  Property tests (safety invariants):');
+
+  const errorCount = (code) => {
+    const t = ParserService.parse(code);
+    let c = 0;
+    const isMissing = (n) => (typeof n.isMissing === 'function' ? n.isMissing() : !!n.isMissing);
+    const walk = (n) => {
+      if (n.type === 'ERROR' || isMissing(n)) c++;
+      for (let i = 0; i < n.childCount; i++) walk(n.child(i));
+    };
+    walk(t.rootNode);
+    return c;
+  };
+
+  const propertyCorpus = [
+    'f = lambda x: x + 1',
+    'y = [a for a in items]',
+    'x = {k: v for k, v in items}',
+    'total = sum(x for x in nums)',
+    'z = {a for a in s}',
+    'g = (i * i for i in range(10))',
+    'x = 1; y = 2; z = 3',
+    'a, b = b, a',
+    'count: int = 0',
+    'def f(x: int, y: str = "a") -> bool:\n    return True',
+    'result = [x for x in data if x > 0]',
+    'nested = [[y for y in row] for row in grid]',
+    'd = {**a, **b}',
+    'print(*args, **kwargs)',
+    'x = a if cond else b',
+    'with open("f") as fh, open("g") as gh:\n    pass',
+    'async def f():\n    await g()',
+    'x: List[int] = []',
+    'def f():\n    """doc"""\n    return [i for i in range(3)]',
+    'class C:\n    x = {k: v for k, v in pairs}',
+    'import os',
+    'from a.b.c import d',
+    '@decorator\ndef f():\n    pass',
+    'while True:\n    break',
+    'try:\n    x = 1\nexcept (A, B) as e:\n    raise',
+  ];
+
+  // Property 1: formatting valid code never introduces parse errors (no corruption).
+  const corrupted = propertyCorpus.filter(
+    (src) => errorCount(Formatter.format(src)) > errorCount(src)
+  );
+  if (corrupted.length === 0) {
+    console.log(`  ✅ never corrupts valid code (${propertyCorpus.length} snippets)`);
+    passed++;
+  } else {
+    console.error(`  ❌ corrupted ${corrupted.length} snippet(s):`);
+    corrupted.forEach((s) =>
+      console.error(`     ${JSON.stringify(s)} -> ${JSON.stringify(Formatter.format(s))}`)
+    );
+    failed++;
+  }
+
+  // Property 2: idempotency — format(format(x)) === format(x).
+  const nonIdempotent = propertyCorpus.filter((src) => {
+    const once = Formatter.format(src);
+    return Formatter.format(once) !== once;
+  });
+  if (nonIdempotent.length === 0) {
+    console.log(`  ✅ idempotent (${propertyCorpus.length} snippets)`);
+    passed++;
+  } else {
+    console.error(`  ❌ ${nonIdempotent.length} snippet(s) not idempotent:`);
+    nonIdempotent.forEach((s) => console.error(`     ${JSON.stringify(s)}`));
+    failed++;
+  }
+
+  // Property 3: repairing/formatting broken code never makes it parse worse.
+  const brokenCorpus = [
+    'def f()\n    return 1',
+    'if x > 0\n    pass',
+    'for i in range(3)\n    print(i)',
+    'while x\n    x -= 1',
+    'class C\n    pass',
+    'if x:\n    a = 1\nelse\n    a = 2',
+    'x = foo(1, 2',          // unclosed paren — unrepairable, must not worsen
+    'def bad(\nx = 2',       // dangling — unrepairable
+    'x = [1, 2,',            // unclosed bracket
+    'try\n    pass\nexcept\n    pass',
+  ];
+  const worsened = brokenCorpus.filter((src) => errorCount(Formatter.format(src)) > errorCount(src));
+  if (worsened.length === 0) {
+    console.log(`  ✅ never worsens broken code (${brokenCorpus.length} snippets)`);
+    passed++;
+  } else {
+    console.error(`  ❌ worsened ${worsened.length} snippet(s):`);
+    worsened.forEach((s) =>
+      console.error(`     ${JSON.stringify(s)} -> ${JSON.stringify(Formatter.format(s))}`)
+    );
+    failed++;
   }
 
   console.log(`\n  ${passed} passed, ${failed} failed\n`);

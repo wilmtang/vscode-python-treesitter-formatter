@@ -24,9 +24,16 @@ export async function activate(context: vscode.ExtensionContext) {
         try {
           const config = vscode.workspace.getConfiguration('treesitterFormatter');
           const indentSize = config.get<number>('indentSize') || 4;
+          const repairSyntax = config.get<boolean>('repairSyntax') ?? true;
+          const maxLineLength = config.get<number>('maxLineLength') || 88;
 
           const originalText = document.getText();
-          const formattedText = Formatter.format(originalText, indentSize);
+          const formattedText = Formatter.format(
+            originalText,
+            indentSize,
+            repairSyntax,
+            maxLineLength
+          );
 
           const fullRange = new vscode.Range(
             document.positionAt(0),

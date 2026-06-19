@@ -1,12 +1,14 @@
 # Error-Tolerant Python Formatter
 
-A robust, fully PEP-8 compliant Python formatter for VS Code, built with engineering excellence. It uses Tree-sitter to parse the Python AST and intelligently rebuilds the formatted code, ensuring that even severely malformed or incomplete code is handled gracefully.
+A local, deterministic, PyCharm-style Python formatter for VS Code. It uses Tree-sitter to parse the Python AST and rebuild PEP-8 formatted code — and because Tree-sitter recovers from errors, it formats code that doesn't fully parse (which Black, autopep8, and yapf refuse), even repairing some breakage along the way. A re-parse safety net guarantees it never emits code that parses worse than what you gave it.
 
 ## 🚀 Features
 
-- **PEP-8 Compliant**: Automatically formats indentation, spacing around operators, line breaks, and more according to PEP-8 standards.
-- **Error Tolerant**: Unlike regex-based formatters, this extension understands the structure of your code. If you have syntax errors (e.g., missing colons, unclosed parentheses), it gracefully skips formatting the broken sections while continuing to format the rest of the file.
-- **WASM Powered**: Built on `@vscode/tree-sitter-wasm`, ensuring lightning-fast formatting entirely locally with zero external Python dependencies (no need for `black`, `autopep8`, or `yapf` in your environment).
+- **PEP-8 formatting**: normalizes spacing around operators, commas, and colons; blank lines around and within definitions; comma-separated lists; and wraps lines that exceed a configurable width (default 88) one element per line.
+- **Reindentation**: rebuilds indentation from structure, so tabs, mixed, over-, under-, or inconsistent indentation all normalize to your indent size.
+- **Syntax repair**: inserts a missing colon after a compound-statement header (`if`/`for`/`while`/`def`/`class`/…). Every repair is verified by re-parsing and kept only if it reduces syntax errors — going beyond Black/autopep8 (which refuse unparseable code) without the risk.
+- **Never corrupts your code**: anything the formatter doesn't understand is preserved verbatim, and a re-parse safety net falls back to your original text if formatting would ever introduce a syntax error. Backed by property tests (*valid stays valid*, *idempotent*, *never worsens broken code*).
+- **Local, deterministic, WASM-powered**: built on `@vscode/tree-sitter-wasm` — fast, fully offline, with zero external Python dependencies (no `black`, `autopep8`, or `yapf` needed).
 
 ## 🛠️ How It Works
 
@@ -16,10 +18,12 @@ The extension uses a multi-stage pipeline to format your code:
    When you trigger a format, the raw code is passed to Tree-sitter (running via WebAssembly). Tree-sitter produces an Abstract Syntax Tree (AST) representing the structure of your code.
 2. **Context Management (`Context.ts`)**: 
    A stateful context tracks indentation levels and pending blank lines. This ensures strict adherence to rules like "two blank lines between top-level function definitions."
-3. **AST Traversal (`Printer.ts` & `Formatter.ts`)**: 
-   A recursive visitor pattern walks through the Tree-sitter AST. It knows how to print every single Python node type (`function_definition`, `binary_operator`, `list`, etc.) with perfect PEP-8 spacing.
-4. **Error Handling**: 
-   If Tree-sitter encounters malformed code, it generates an `ERROR` node. The `Printer` detects these nodes and outputs their original text exactly as written, meaning the formatter will never accidentally delete or mangle your broken code while you're in the middle of typing.
+3. **AST Traversal (`Printer.ts`)**: 
+   A recursive visitor walks the Tree-sitter AST and prints each supported node type (`function_definition`, `binary_operator`, `list`, etc.) with PEP-8 spacing, wrapping bracketed groups that don't fit the line width. Nodes without a dedicated handler fall back to lossless passthrough (see below).
+4. **Repair (`Repairer.ts`)**: 
+   When the input has parse errors, a pre-pass attempts targeted, deterministic fixes (e.g. inserting a missing colon after a compound header). Each candidate edit is applied to a copy, re-parsed, and kept only if it strictly reduces the number of parse errors — otherwise it's reverted. This makes repair safe by construction.
+5. **Lossless passthrough & safety net (`Printer.ts` & `Formatter.ts`)**: 
+   The `Printer` only reformats nodes it has a tested handler for; everything else (including Tree-sitter `ERROR` nodes) is emitted as its original source text, so broken or unsupported code is never deleted or mangled. As a final guard, `Formatter` re-parses its own output and falls back to the original text if formatting would ever introduce a syntax error.
 
 ## 💻 How to Use
 
@@ -34,9 +38,10 @@ The extension uses a multi-stage pipeline to format your code:
 5. Right-click and select **Format Document**, or use the keyboard shortcut `Shift+Alt+F` (Windows/Linux) or `Shift+Option+F` (macOS).
 
 ### Configuration
-The extension registers as a standard VS Code formatting provider. It respects your standard editor settings:
-- `editor.tabSize` (defaults to 4 spaces)
-- `editor.insertSpaces` (defaults to true)
+The extension registers as a standard VS Code formatting provider and contributes these settings:
+- `treesitterFormatter.indentSize` (default `4`) — spaces per indentation level.
+- `treesitterFormatter.maxLineLength` (default `88`) — bracketed constructs (calls, collections, parameter lists) that exceed this width are wrapped one element per line. Use `79` for strict PEP-8, or `120` for PyCharm's default.
+- `treesitterFormatter.repairSyntax` (default `true`) — attempt verify-or-revert syntax repair (e.g. inserting missing colons) before formatting.
 
 #### Setting as Default Formatter
 To make this extension your default formatter for Python files so that it runs automatically when you format or save:
@@ -55,7 +60,7 @@ To make this extension your default formatter for Python files so that it runs a
 This project is backed by a robust, two-tier testing strategy.
 
 ### 1. Fast Unit Tests (Standalone)
-We have a custom test runner that executes directly against the formatting engine without the overhead of launching VS Code. It covers over 30 test cases including edge cases, nested functions, and syntax error recovery.
+We have a custom test runner that executes directly against the formatting engine without the overhead of launching VS Code. It covers 70+ checks — basic formatting, comprehensions/lambdas/annotations, reindentation, syntax repair, line wrapping — plus safety-invariant property tests (*never corrupts valid code*, *idempotent*, *never worsens broken code*).
 
 ```bash
 # Compile TypeScript to JavaScript, then run the fast tests

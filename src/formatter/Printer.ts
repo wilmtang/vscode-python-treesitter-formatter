@@ -21,11 +21,25 @@ interface SyntaxNode {
  * Printer walks the Tree-sitter AST using a visitor pattern and emits
  * PEP-8 formatted Python code into a FormatterContext.
  *
- * For ERROR nodes (syntax errors), the original text is preserved as-is
- * to provide error-tolerant formatting.
+ * Design principle: format what we understand; for everything else emit the
+ * original source text verbatim (the `default` case). We never reconstruct an
+ * unknown node from its children, because the generic "concatenate children"
+ * path silently drops required spacing. Worst case we under-format an
+ * unsupported construct; we never mangle it. The Formatter adds a re-parse
+ * safety net on top, so corruption is structurally impossible.
  */
 export class Printer {
   private ctx: FormatterContext;
+
+  private static readonly OPEN_BRACKETS = ['(', '[', '{'];
+  private static readonly CLOSE_BRACKETS = [')', ']', '}'];
+
+  // Bracketed, comma-separated groups that may be exploded across lines when
+  // they don't fit. (Unbracketed comma lists like pattern_list, and grouping
+  // parens like parenthesized_expression, are never exploded.)
+  private static readonly EXPLODABLE = new Set([
+    'argument_list', 'parameters', 'list', 'dictionary', 'set', 'tuple',
+  ]);
 
   constructor(ctx: FormatterContext) {
     this.ctx = ctx;
@@ -101,9 +115,17 @@ export class Printer {
       case 'binary_operator':
       case 'boolean_operator':
       case 'comparison_operator':
-      case 'assignment':
       case 'augmented_assignment':
         this.printBinaryLike(node);
+        break;
+
+      // `name = value`, `name: type`, `name: type = value`, and the parameter
+      // forms `x: int` / `x: int = 0`: no space before `:`, one space after;
+      // spaces around `=`.
+      case 'assignment':
+      case 'typed_parameter':
+      case 'typed_default_parameter':
+        this.printColonEquals(node);
         break;
 
       case 'not_operator':
@@ -115,6 +137,8 @@ export class Printer {
         this.printCall(node);
         break;
 
+      // Bracketed / comma-separated sequences. printListLike inserts a space
+      // after each comma and drops a redundant trailing comma.
       case 'argument_list':
       case 'parameters':
       case 'tuple':
@@ -122,11 +146,20 @@ export class Printer {
       case 'dictionary':
       case 'set':
       case 'parenthesized_expression':
-      case 'generator_expression':
+      case 'pattern_list':
+      case 'expression_list':
+      case 'lambda_parameters':
+        this.printListLike(node);
+        break;
+
+      // Comprehensions / generator expressions: the body and the
+      // `for`/`in`/`if` clauses must be space-separated, or "a for a" collapses
+      // into "afor a" (the original corruption bug).
       case 'list_comprehension':
       case 'dictionary_comprehension':
       case 'set_comprehension':
-        this.printListLike(node);
+      case 'generator_expression':
+        this.printComprehension(node);
         break;
 
       case 'pair':
@@ -153,7 +186,7 @@ export class Printer {
         break;
 
       case 'default_parameter':
-        // def f(x=1) — no spaces around =
+        // def f(x=1) — no spaces around = (unannotated default)
         if (node.childCount >= 3) {
           this.printNode(node.child(0));
           this.ctx.write('=');
@@ -171,9 +204,12 @@ export class Printer {
         this.printChildren(node);
         break;
 
-      case 'lambda':
       case 'conditional_expression':
         this.printChildrenSpaced(node);
+        break;
+
+      case 'lambda':
+        this.printLambda(node);
         break;
 
       case 'identifier':
@@ -200,41 +236,16 @@ export class Printer {
         break;
 
       default:
-        if (node.childCount === 0) {
-          this.ctx.write(node.text);
-        } else {
-          this.printChildren(node);
-        }
+        // Lossless fallback. Anything without a correct, tested handler is
+        // emitted as its ORIGINAL source text rather than rebuilt from its
+        // children — see the class comment.
+        this.ctx.write(node.text);
         break;
     }
   }
 
-  /**
-   * Print module-level children with PEP-8 blank line separation:
-   * - Two blank lines before/after top-level function/class definitions
-   * - One newline after other statements
-   */
   private printModule(node: SyntaxNode): void {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i)!;
-      const isDefLike = child.type === 'function_definition' ||
-                         child.type === 'class_definition' ||
-                         child.type === 'decorated_definition';
-
-      // PEP-8: two blank lines before top-level definitions
-      if (isDefLike && i > 0) {
-        this.ctx.twoBlankLines();
-      }
-
-      this.printNode(child);
-
-      // PEP-8: two blank lines after top-level definitions
-      if (isDefLike) {
-        this.ctx.twoBlankLines();
-      } else {
-        this.ctx.newline();
-      }
-    }
+    this.printStatements(node, true);
   }
 
   /**
@@ -290,27 +301,70 @@ export class Printer {
   private printBlock(node: SyntaxNode): void {
     this.ctx.indent();
     this.ctx.newline();
+    this.printStatements(node, false);
+    this.ctx.dedent();
+    // Leave a pending newline so whatever follows the block — a sibling clause
+    // (elif/else/except/finally) or a dedented statement — starts on its own
+    // line instead of running onto the block's last line.
+    this.ctx.newline();
+  }
+
+  private isDefLike(node: SyntaxNode): boolean {
+    return (
+      node.type === 'function_definition' ||
+      node.type === 'class_definition' ||
+      node.type === 'decorated_definition'
+    );
+  }
+
+  /**
+   * Print a sequence of statements (a module body or a block body) with:
+   *  - PEP-8 blank-line separation around definitions (2 at top level, 1 nested)
+   *  - preservation of author blank lines, capped (2 at top level, 1 nested)
+   *  - inline (trailing) comments kept on the previous statement's line
+   *  - semicolon-separated simple statements split onto their own lines
+   */
+  private printStatements(node: SyntaxNode, topLevel: boolean): void {
+    const defBlanks = topLevel ? 2 : 1;
+    const maxBlanks = topLevel ? 2 : 1;
+    let prev: SyntaxNode | null = null;
+    let prevWasDef = false;
+
     for (let i = 0; i < node.childCount; i++) {
       const child = node.child(i)!;
-      const isDefLike = child.type === 'function_definition' ||
-                         child.type === 'class_definition' ||
-                         child.type === 'decorated_definition';
 
-      // PEP-8: blank line before nested definitions
-      if (isDefLike && i > 0) {
-        this.ctx.emptyLine();
+      // Semicolons separate simple statements on one line; we split them, so
+      // the token itself is dropped.
+      if (child.type === ';') {
+        continue;
+      }
+
+      if (prev !== null) {
+        // Inline comment sharing the previous statement's source line.
+        if (child.type === 'comment' && child.startPosition.row === prev.endPosition.row) {
+          this.ctx.trailingComment(child.text);
+          prev = child;
+          continue;
+        }
+
+        const gap = child.startPosition.row - prev.endPosition.row;
+        let blanks = Math.min(Math.max(gap - 1, 0), maxBlanks);
+        if (this.isDefLike(child) || prevWasDef) {
+          blanks = Math.max(blanks, defBlanks);
+        }
+        if (blanks >= 2) {
+          this.ctx.twoBlankLines();
+        } else if (blanks === 1) {
+          this.ctx.emptyLine();
+        } else {
+          this.ctx.newline();
+        }
       }
 
       this.printNode(child);
-
-      // PEP-8: blank line after nested definitions
-      if (isDefLike && i < node.childCount - 1) {
-        this.ctx.emptyLine();
-      } else {
-        this.ctx.newline();
-      }
+      prev = child;
+      prevWasDef = this.isDefLike(child);
     }
-    this.ctx.dedent();
   }
 
   private printChildren(node: SyntaxNode): void {
@@ -371,6 +425,27 @@ export class Printer {
     }
   }
 
+  /**
+   * Print nodes whose children are separated by `:` (annotation) and/or `=`
+   * (assignment / annotated default). No space before `:`, one space after;
+   * spaces around `=`. Covers assignment, typed_parameter, typed_default_parameter.
+   */
+  private printColonEquals(node: SyntaxNode): void {
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i)!;
+      if (child.type === ':') {
+        this.ctx.write(':');
+        this.ctx.space();
+      } else if (child.type === '=') {
+        this.ctx.space();
+        this.ctx.write('=');
+        this.ctx.space();
+      } else {
+        this.printNode(child);
+      }
+    }
+  }
+
   private printCall(node: SyntaxNode): void {
     // No space between function name and argument_list
     for (let i = 0; i < node.childCount; i++) {
@@ -379,11 +454,152 @@ export class Printer {
   }
 
   private printListLike(node: SyntaxNode): void {
+    if (this.shouldExplode(node)) {
+      this.printExploded(node);
+    } else {
+      this.printFlatList(node);
+    }
+  }
+
+  /**
+   * Decide whether a bracketed group should be exploded across lines: only when
+   * wrapping is enabled, the group is explodable and non-empty, and its flat
+   * rendering would push the current line past the max width.
+   */
+  private shouldExplode(node: SyntaxNode): boolean {
+    if (!Number.isFinite(this.ctx.maxWidth)) return false;
+    if (!Printer.EXPLODABLE.has(node.type)) return false;
+    if (node.childCount <= 2) return false; // just the brackets, nothing inside
+    const lineWidth =
+      this.ctx.currentColumn() + this.flatWidth(node) + this.headerSuffixWidth(node);
+    return lineWidth > this.ctx.maxWidth;
+  }
+
+  /**
+   * Width of the tokens that follow this group on the same line. Today this only
+   * matters for a function/class `parameters` list, which is always followed by
+   * `:` (and optionally `-> <type>`) — without counting them, a header that is
+   * one or two chars over the limit is wrongly judged to fit.
+   */
+  private headerSuffixWidth(node: SyntaxNode): number {
+    const parent = node.parent;
+    if (!parent || node.type !== 'parameters') return 0;
+    let width = 0;
+    let seenParams = false;
+    for (let i = 0; i < parent.childCount; i++) {
+      const sib = parent.child(i);
+      if (!sib) continue;
+      if (seenParams) {
+        if (sib.type === 'block') break;
+        if (sib.type === ':') width += 1;
+        else if (sib.type === '->') width += 4; // " -> "
+        else width += this.flatWidth(sib);
+      }
+      if (sib.type === 'parameters') seenParams = true;
+    }
+    return width;
+  }
+
+  /** Width of `node` rendered flat (no wrapping), via a throwaway context. */
+  private flatWidth(node: SyntaxNode): number {
+    const probe = new FormatterContext(this.ctx.getIndentSize(), Number.POSITIVE_INFINITY);
+    new Printer(probe).printNode(node);
+    return probe.getRaw().length;
+  }
+
+  /** Single-line rendering: `space` after each comma, redundant trailing comma dropped. */
+  private printFlatList(node: SyntaxNode): void {
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i)!;
+      if (child.type === ',') {
+        const next = i + 1 < node.childCount ? node.child(i + 1)! : null;
+        const isTrailing = !!next && Printer.CLOSE_BRACKETS.includes(next.type);
+        // Drop a redundant trailing comma — but NOT in a tuple, where a single
+        // trailing comma is significant: "(1,)" is a 1-tuple, "(1)" is not.
+        if (isTrailing && node.type !== 'tuple') {
+          continue;
+        }
+        this.ctx.write(',');
+        if (!isTrailing) {
+          this.ctx.space();
+        }
+      } else {
+        this.printNode(child);
+      }
+    }
+  }
+
+  /**
+   * Multi-line rendering: open bracket, then one element per indented line
+   * (recursively, so a too-wide element is itself wrapped), then the closing
+   * bracket back at the statement's indent. No trailing comma is added — this
+   * keeps `*args`/`**kwargs` valid and lets the group collapse back to one line
+   * if it later fits (idempotent, width-driven).
+   */
+  private printExploded(node: SyntaxNode): void {
+    const open = node.child(0)!;
+    const close = node.child(node.childCount - 1)!;
+
+    const elements: SyntaxNode[] = [];
+    for (let i = 1; i < node.childCount - 1; i++) {
+      const child = node.child(i)!;
+      if (child.type !== ',') {
+        elements.push(child);
+      }
+    }
+
+    this.printNode(open);
+    this.ctx.indent();
+    for (let i = 0; i < elements.length; i++) {
+      this.ctx.newline();
+      this.printNode(elements[i]);
+      if (i < elements.length - 1) {
+        this.ctx.write(',');
+      }
+    }
+    this.ctx.dedent();
+    this.ctx.newline();
+    this.printNode(close);
+  }
+
+  /**
+   * Comprehensions and generator expressions: space-separate the body and each
+   * clause, but keep brackets tight (no space after `[`/`(`/`{` or before the
+   * closer).
+   */
+  private printComprehension(node: SyntaxNode): void {
     for (let i = 0; i < node.childCount; i++) {
       const child = node.child(i)!;
       this.printNode(child);
-      if (child.type === ',') {
+      const next = i + 1 < node.childCount ? node.child(i + 1)! : null;
+      if (
+        next &&
+        !Printer.OPEN_BRACKETS.includes(child.type) &&
+        !Printer.CLOSE_BRACKETS.includes(next.type)
+      ) {
         this.ctx.space();
+      }
+    }
+  }
+
+  private printLambda(node: SyntaxNode): void {
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i)!;
+      if (child.type === 'lambda') {
+        // Write the keyword token directly. Recursing would re-enter this same
+        // case on the keyword child (it shares the node type "lambda") and emit
+        // nothing — which is exactly how the keyword used to get deleted.
+        this.ctx.write('lambda');
+      } else if (child.type === ':') {
+        this.ctx.write(':');
+        this.ctx.space();
+      } else {
+        // A space separates the `lambda` keyword from its parameters.
+        const prevChild = i > 0 ? node.child(i - 1) : null;
+        if (prevChild && prevChild.type === 'lambda') {
+          this.ctx.space();
+        }
+        this.printNode(child);
       }
     }
   }
