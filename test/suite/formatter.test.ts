@@ -615,4 +615,128 @@ describe('E2E: Error-Tolerant Python Formatter', () => {
         const result = await formatViaVSCode('result = f(a, b, c)');
         assert.strictEqual(result, 'result = f(a, b, c)\n');
     });
+
+    // ─────────────────────────────────────────────────────────────
+    //  REDUNDANT PARENTHESES (dropped in neutral positions)
+    // ─────────────────────────────────────────────────────────────
+
+    it('removes redundant parens after return', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('return (value)');
+        assert.strictEqual(result, 'return value\n');
+    });
+
+    it('removes redundant parens on an assignment RHS', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('x = (a + b)');
+        assert.strictEqual(result, 'x = a + b\n');
+    });
+
+    it('removes redundant parens in an if condition', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('if (x):\n    pass');
+        assert.strictEqual(result, 'if x:\n    pass\n');
+    });
+
+    it('collapses doubled parens', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('((x))');
+        assert.strictEqual(result, 'x\n');
+    });
+
+    it('keeps parens that carry precedence', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('r = (a + b) * c');
+        assert.strictEqual(result, 'r = (a + b) * c\n');
+    });
+
+    it('keeps parens around a walrus assignment', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('x = (y := 1)');
+        assert.strictEqual(result, 'x = (y := 1)\n');
+    });
+
+    it('keeps parens after a unary operator', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('r = -(a + b)');
+        assert.strictEqual(result, 'r = -(a + b)\n');
+    });
+
+    // ─────────────────────────────────────────────────────────────
+    //  SLICE SPACING (complex operands)
+    // ─────────────────────────────────────────────────────────────
+
+    it('spaces slice colons for complex operands', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('v = ham[lower + offset:upper + offset]');
+        assert.strictEqual(result, 'v = ham[lower + offset : upper + offset]\n');
+    });
+
+    it('keeps a simple slice tight', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('v = ham[1:9]');
+        assert.strictEqual(result, 'v = ham[1:9]\n');
+    });
+
+    it('keeps a step-only slice tight', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('v = ham[::2]');
+        assert.strictEqual(result, 'v = ham[::2]\n');
+    });
+
+    it('omits the space on an absent slice bound', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('v = ham[a + 1:]');
+        assert.strictEqual(result, 'v = ham[a + 1 :]\n');
+    });
+
+    // ─────────────────────────────────────────────────────────────
+    //  NUMERIC LITERAL NORMALIZATION
+    // ─────────────────────────────────────────────────────────────
+
+    it('lowercases hex prefix and uppercases hex digits', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('x = 0Xff');
+        assert.strictEqual(result, 'x = 0xFF\n');
+    });
+
+    it('lowercases the exponent marker', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('x = 1E3');
+        assert.strictEqual(result, 'x = 1e3\n');
+    });
+
+    it('lowercases the imaginary suffix', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('x = 3J');
+        assert.strictEqual(result, 'x = 3j\n');
+    });
+
+    it('normalizes hex with underscores', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('x = 0xab_cd');
+        assert.strictEqual(result, 'x = 0xAB_CD\n');
+    });
+
+    // ─────────────────────────────────────────────────────────────
+    //  STRING PREFIX NORMALIZATION
+    // ─────────────────────────────────────────────────────────────
+
+    it('lowercases an f-string prefix', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('s = F"hi"');
+        assert.strictEqual(result, 's = f"hi"\n');
+    });
+
+    it('lowercases a raw-bytes prefix', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('s = RB"raw"');
+        assert.strictEqual(result, 's = rb"raw"\n');
+    });
+
+    it('lowercases the prefix but preserves f-string interpolations', async function () {
+        this.timeout(30000);
+        const result = await formatViaVSCode('s = F"a {x + 1} b"');
+        assert.strictEqual(result, 's = f"a {x + 1} b"\n');
+    });
 });

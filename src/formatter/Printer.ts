@@ -145,11 +145,15 @@ export class Printer {
       case 'list':
       case 'dictionary':
       case 'set':
-      case 'parenthesized_expression':
       case 'pattern_list':
       case 'expression_list':
       case 'lambda_parameters':
         this.printListLike(node);
+        break;
+
+      case 'parenthesized_expression':
+        // ( inner ) — drop the parens when they're redundant, else keep them.
+        this.printParenthesized(node);
         break;
 
       // Comprehensions / generator expressions: the body and the
@@ -198,10 +202,14 @@ export class Printer {
 
       case 'attribute':
       case 'subscript':
-      case 'slice':
       case 'unary_operator':
-        // No spaces: obj.attr, obj[key], start:stop, -x
+        // No spaces: obj.attr, obj[key], -x
         this.printChildren(node);
+        break;
+
+      case 'slice':
+        // start:stop:step — colons get spaces only for complex operands.
+        this.printSlice(node);
         break;
 
       case 'conditional_expression':
@@ -212,10 +220,18 @@ export class Printer {
         this.printLambda(node);
         break;
 
-      case 'identifier':
       case 'integer':
       case 'float':
+        // Black-style literal normalization (casing only, never the value).
+        this.ctx.write(Printer.normalizeNumber(node.text));
+        break;
+
       case 'string':
+        // Lowercase the string/bytes prefix (F"x" -> f"x"); body untouched.
+        this.ctx.write(Printer.normalizeStringPrefix(node.text));
+        break;
+
+      case 'identifier':
       case 'concatenated_string':
       case 'true':
       case 'false':
@@ -602,5 +618,120 @@ export class Printer {
         this.printNode(child);
       }
     }
+  }
+
+  /**
+   * A parenthesized_expression `( inner )`. When the parentheses are redundant we
+   * print only the inner expression (`return (x)` -> `return x`); otherwise the
+   * parens are kept (printed like any other bracketed group).
+   */
+  private printParenthesized(node: SyntaxNode): void {
+    if (this.parensAreRedundant(node)) {
+      this.printNode(node.child(1)); // the single inner expression
+    } else {
+      this.printListLike(node);
+    }
+  }
+
+  /**
+   * Parentheses are redundant only when BOTH hold:
+   *  - the parent is a "neutral" position where the parens cannot be carrying
+   *    operator precedence — a statement value, an assignment side, a flow
+   *    condition, or an enclosing pair of parens; and
+   *  - the inner expression doesn't itself require parentheses (`:=` walrus and
+   *    `yield` are kept, since stripping them can change validity or meaning).
+   *
+   * This is why precedence is always safe: in `(a + b) * c` the inner parens'
+   * parent is the `*` binary_operator, not a neutral position, so they're kept.
+   */
+  private parensAreRedundant(node: SyntaxNode): boolean {
+    if (node.childCount !== 3) return false; // exactly ( inner )
+    const open = node.child(0)!;
+    const inner = node.child(1)!;
+    const close = node.child(2)!;
+    if (open.type !== '(' || close.type !== ')') return false;
+    if (inner.type === 'named_expression' || inner.type === 'yield') return false;
+
+    const parent = node.parent;
+    if (!parent) return false;
+    switch (parent.type) {
+      case 'expression_statement':
+      case 'return_statement':
+      case 'assignment':
+      case 'augmented_assignment':
+      case 'if_statement':
+      case 'while_statement':
+      case 'elif_clause':
+      case 'parenthesized_expression':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  /** Operand node types simple enough to keep a slice tight (no colon spaces). */
+  private static readonly SIMPLE_SLICE_OPERANDS = new Set([
+    'identifier', 'integer', 'float', 'none', 'true', 'false',
+    'unary_operator', 'attribute',
+  ]);
+
+  /**
+   * A slice `start:stop:step`. PEP-8/Black treat the colon like a binary operator
+   * and space it equally — but only for a "complex" slice (any operand beyond a
+   * bare name/number). Simple slices like `a[1:9]` or `a[::2]` stay tight. The
+   * space is omitted on a side whose operand is absent, so `a[x + 1 :]` doesn't
+   * grow a dangling space before `]`.
+   */
+  private printSlice(node: SyntaxNode): void {
+    const complex = this.sliceIsComplex(node);
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i)!;
+      if (child.type === ':') {
+        const prev = i > 0 ? node.child(i - 1) : null;
+        const next = i + 1 < node.childCount ? node.child(i + 1) : null;
+        if (complex && prev && prev.type !== ':') this.ctx.space();
+        this.ctx.write(':');
+        if (complex && next && next.type !== ':') this.ctx.space();
+      } else {
+        this.printNode(child);
+      }
+    }
+  }
+
+  /** A slice is "complex" if any present operand is more than a bare name/number. */
+  private sliceIsComplex(node: SyntaxNode): boolean {
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i)!;
+      if (child.type === ':') continue;
+      if (!Printer.SIMPLE_SLICE_OPERANDS.has(child.type)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Black-style numeric normalization: lowercase the literal, but UPPERCASE the
+   * digits of a hex literal. `0XFF` -> `0xFF`, `1E3` -> `1e3`, `3J` -> `3j`,
+   * `0xab_cd` -> `0xAB_CD`. Only casing changes; the value never does.
+   */
+  private static normalizeNumber(text: string): string {
+    const lower = text.toLowerCase();
+    if (lower.startsWith('0x')) {
+      return '0x' + lower.slice(2).toUpperCase();
+    }
+    return lower;
+  }
+
+  /**
+   * Lowercase a string/bytes prefix: `F"x"` -> `f"x"`, `RB'y'` -> `rb'y'`. Only a
+   * recognized prefix (a 1-2 letter combo of r/b/f/u before the opening quote) is
+   * touched; the quote style and the body — including f-string interpolations —
+   * are left exactly as written.
+   */
+  private static normalizeStringPrefix(text: string): string {
+    const m = /^([A-Za-z]{1,2})(['"])/.exec(text);
+    if (!m || !/^[rbfu]+$/i.test(m[1])) {
+      return text;
+    }
+    return m[1].toLowerCase() + text.slice(m[1].length);
   }
 }

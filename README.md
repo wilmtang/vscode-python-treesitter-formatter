@@ -5,6 +5,7 @@ A local, deterministic, PyCharm-style Python formatter for VS Code. It uses Tree
 ## 🚀 Features
 
 - **PEP-8 formatting**: normalizes spacing around operators, commas, and colons; blank lines around and within definitions; comma-separated lists; and wraps lines that exceed a configurable width (default 88) one element per line.
+- **Token normalization**: removes redundant parentheses (`return (x)` → `return x`), spaces complex slice colons (`a[i + 1 : j]`), and lowercases numeric-literal (`0XFF` → `0xFF`) and string-prefix (`F"x"` → `f"x"`) casing.
 - **Reindentation**: rebuilds indentation from structure, so tabs, mixed, over-, under-, or inconsistent indentation all normalize to your indent size.
 - **Syntax repair**: inserts a missing colon after a compound-statement header (`if`/`for`/`while`/`def`/`class`/…). Every repair is verified by re-parsing and kept only if it reduces syntax errors — going beyond Black/autopep8 (which refuse unparseable code) without the risk.
 - **Never corrupts your code**: anything the formatter doesn't understand is preserved verbatim, and a re-parse safety net falls back to your original text if formatting would ever introduce a syntax error. Backed by property tests (*valid stays valid*, *idempotent*, *never worsens broken code*).
@@ -56,18 +57,25 @@ y=3                             y=3
 ```
 > **Black:** ❌ refuses the entire file — `Cannot parse`.
 
-### Where Black does more
+### Normalizations it shares with Black
 
-On code that already parses, Black does more than this formatter — these are real differences. (The **This formatter** column is real output from the test suite; the **Black** column reflects Black's documented, standard behavior.)
+On valid code it also applies these Black-style normalizations — here its output matches Black's:
+
+| Feature | Input | Output |
+|---|---|---|
+| Redundant parens | `return (value)` | `return value` |
+| Slice spacing (complex operands) | `ham[lower + offset:upper + offset]` | `ham[lower + offset : upper + offset]` |
+| Numeric literals | `x = 0XFF`, `y = 1E3` | `x = 0xFF`, `y = 1e3` |
+| String prefixes | `s = F"hi"` | `s = f"hi"` |
+
+### Where Black still does more
+
+On code that already parses, Black does a few things this formatter deliberately doesn't. (The **This formatter** column is real output from the test suite; the **Black** column reflects Black's documented, standard behavior.)
 
 | Feature | Input | This formatter | Black |
 |---|---|---|---|
 | Quote normalization | `name = 'world'` | `name = 'world'` | `name = "world"` |
-| Numeric literals | `x = 0XFF` | `x = 0XFF` | `x = 0xFF` |
-| String prefixes | `s = F"hi"` | `s = F"hi"` | `s = f"hi"` |
 | Power-operator hugging | `x = 2**8` | `x = 2 ** 8` | `x = 2**8` |
-| Slice spacing (complex operands) | `ham[lower + offset:upper + offset]` | `ham[lower + offset:upper + offset]` | `ham[lower + offset : upper + offset]` |
-| Redundant parens | `return (value)` | `return (value)` | `return value` |
 
 **Magic trailing comma** — a trailing comma tells Black to keep a collection exploded; this formatter simply drops it:
 

@@ -407,6 +407,128 @@ async function runTests() {
       maxLineLength: 88,
       expected: 'configure(\n    name=value,\n    other=thing,\n    *more_args,\n    debug=True,\n    verbose=False,\n    **all_the_kwargs\n)\n'
     },
+    //
+    // ─── REDUNDANT PARENTHESES (dropped in neutral positions) ───
+    //
+    {
+      name: 'removes redundant parens after return',
+      input: 'return (value)',
+      expected: 'return value\n'
+    },
+    {
+      name: 'removes redundant parens on an assignment RHS',
+      input: 'x = (a + b)',
+      expected: 'x = a + b\n'
+    },
+    {
+      name: 'removes redundant parens in an if condition',
+      input: 'if (x):\n    pass',
+      expected: 'if x:\n    pass\n'
+    },
+    {
+      name: 'removes redundant parens around a bare expression',
+      input: '(x)',
+      expected: 'x\n'
+    },
+    {
+      name: 'collapses doubled parens',
+      input: '((x))',
+      expected: 'x\n'
+    },
+    {
+      name: 'keeps parens that carry precedence',
+      input: 'r = (a + b) * c',
+      expected: 'r = (a + b) * c\n'
+    },
+    {
+      name: 'keeps parens around a walrus assignment',
+      input: 'x = (y := 1)',
+      expected: 'x = (y := 1)\n'
+    },
+    {
+      name: 'keeps parens after a unary operator',
+      input: 'r = -(a + b)',
+      expected: 'r = -(a + b)\n'
+    },
+    //
+    // ─── SLICE SPACING (complex operands) ───────────────────────
+    //
+    {
+      name: 'spaces slice colons for complex operands',
+      input: 'v = ham[lower + offset:upper + offset]',
+      expected: 'v = ham[lower + offset : upper + offset]\n'
+    },
+    {
+      name: 'keeps a simple slice tight',
+      input: 'v = ham[1:9]',
+      expected: 'v = ham[1:9]\n'
+    },
+    {
+      name: 'keeps a step-only slice tight',
+      input: 'v = ham[::2]',
+      expected: 'v = ham[::2]\n'
+    },
+    {
+      name: 'keeps a negative-index slice tight',
+      input: 'v = ham[-1:]',
+      expected: 'v = ham[-1:]\n'
+    },
+    {
+      name: 'omits the space on an absent slice bound',
+      input: 'v = ham[a + 1:]',
+      expected: 'v = ham[a + 1 :]\n'
+    },
+    //
+    // ─── NUMERIC LITERAL NORMALIZATION ──────────────────────────
+    //
+    {
+      name: 'lowercases hex prefix and uppercases hex digits',
+      input: 'x = 0Xff',
+      expected: 'x = 0xFF\n'
+    },
+    {
+      name: 'lowercases the exponent marker',
+      input: 'x = 1E3',
+      expected: 'x = 1e3\n'
+    },
+    {
+      name: 'lowercases the imaginary suffix',
+      input: 'x = 3J',
+      expected: 'x = 3j\n'
+    },
+    {
+      name: 'normalizes hex with underscores',
+      input: 'x = 0xab_cd',
+      expected: 'x = 0xAB_CD\n'
+    },
+    {
+      name: 'keeps binary and octal prefixes lowercased',
+      input: 'x = 0B101\ny = 0O17',
+      expected: 'x = 0b101\ny = 0o17\n'
+    },
+    //
+    // ─── STRING PREFIX NORMALIZATION ────────────────────────────
+    //
+    {
+      name: 'lowercases an f-string prefix',
+      input: 's = F"hi"',
+      expected: 's = f"hi"\n'
+    },
+    {
+      name: 'lowercases a bytes prefix',
+      input: 's = B"x"',
+      expected: 's = b"x"\n'
+    },
+    {
+      name: 'lowercases a raw-bytes prefix',
+      input: 's = RB"raw"',
+      expected: 's = rb"raw"\n'
+    },
+    {
+      name: 'lowercases the prefix but preserves f-string interpolations',
+      input: 's = F"a {x + 1} b"',
+      expected: 's = f"a {x + 1} b"\n'
+    },
   ];
 
   let passed = 0;
@@ -473,6 +595,12 @@ async function runTests() {
     '@decorator\ndef f():\n    pass',
     'while True:\n    break',
     'try:\n    x = 1\nexcept (A, B) as e:\n    raise',
+    'return (a + b)',
+    'v = arr[i + 1:j - 1]',
+    'x = 0XFF',
+    's = F"hello {name}"',
+    'x = (y := 10)',
+    'data = obj.attr[start:stop:step]',
   ];
 
   // Property 1: formatting valid code never introduces parse errors (no corruption).
