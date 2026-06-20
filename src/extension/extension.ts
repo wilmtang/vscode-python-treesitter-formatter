@@ -1,6 +1,10 @@
 import * as vscode from 'vscode';
 import { ParserService } from '../parser/ParserService';
+import { IncrementalParser } from '../parser/IncrementalParser';
 import { Formatter } from '../formatter/Formatter';
+import { IndentOnTypeProvider } from './IndentOnTypeProvider';
+
+let incrementalParser: IncrementalParser | undefined;
 
 export async function activate(context: vscode.ExtensionContext) {
   console.log('Activating Error-Tolerant Python Formatter');
@@ -53,6 +57,32 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(formatterProvider);
+
+  // On-type indentation: keep a per-document tree updated incrementally, and use
+  // it to indent the caret as the user types (Enter, and `:`/closing-bracket
+  // re-alignment). Requires `editor.formatOnType` (defaulted on for Python via
+  // package.json's configurationDefaults).
+  const incremental = new IncrementalParser();
+  incrementalParser = incremental;
+  incremental.seed(vscode.workspace.textDocuments);
+
+  context.subscriptions.push(
+    vscode.workspace.onDidOpenTextDocument((doc) => incremental.onOpen(doc)),
+    vscode.workspace.onDidChangeTextDocument((event) => incremental.onChange(event)),
+    vscode.workspace.onDidCloseTextDocument((doc) => incremental.onClose(doc)),
+    vscode.languages.registerOnTypeFormattingEditProvider(
+      'python',
+      new IndentOnTypeProvider(incremental),
+      '\n',
+      ':',
+      ')',
+      ']',
+      '}'
+    )
+  );
 }
 
-export function deactivate() {}
+export function deactivate() {
+  incrementalParser?.dispose();
+  incrementalParser = undefined;
+}

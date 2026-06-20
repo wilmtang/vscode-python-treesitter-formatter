@@ -46,15 +46,26 @@ export class ParserService {
 
   /**
    * Parse Python source code into a Tree-sitter syntax tree.
+   *
+   * @param code     the source to parse
+   * @param oldTree  optional previously-parsed tree to reuse for an INCREMENTAL
+   *   re-parse. The caller must have already applied the corresponding
+   *   `oldTree.edit(...)` calls describing what changed; Tree-sitter then reuses
+   *   unchanged subtrees, which is far cheaper than a full parse. Omit it for a
+   *   full parse (the default, backward-compatible behavior).
+   *
+   * Note: indices and Point columns from the bundled @vscode/tree-sitter-wasm
+   * are UTF-16 code units (matching VS Code's offset model), despite the
+   * "byte" wording in its inherited C-API doc comments — verified empirically.
    */
-  public static parse(code: string): any {
+  public static parse(code: string, oldTree?: any): any {
     if (!this.parser) {
       throw new Error(
         'ParserService.parse() called before init(). ' +
         'Call ParserService.init() first.'
       );
     }
-    return this.parser.parse(code);
+    return this.parser.parse(code, oldTree);
   }
 
   /**

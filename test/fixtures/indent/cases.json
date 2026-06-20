@@ -1,0 +1,83 @@
+[
+  {
+    "name": "enter: indents the body after a def header",
+    "input": "def f():\n",
+    "line": 1,
+    "character": 0,
+    "ch": "\n",
+    "expected": "def f():\n    "
+  },
+  {
+    "name": "enter: does NOT over-indent after a dict-literal colon",
+    "input": "x = {1: 2}\n",
+    "line": 1,
+    "character": 0,
+    "ch": "\n",
+    "expected": "x = {1: 2}\n"
+  },
+  {
+    "name": "enter: hanging indent inside an open bracket",
+    "input": "foo(\n",
+    "line": 1,
+    "character": 0,
+    "ch": "\n",
+    "expected": "foo(\n    "
+  },
+  {
+    "name": "enter: visual indent aligns under the first element",
+    "input": "result = foo(arg1,\n",
+    "line": 1,
+    "character": 0,
+    "ch": "\n",
+    "expected": "result = foo(arg1,\n             "
+  },
+  {
+    "name": "enter: dedents the auto-indented new line after a return",
+    "input": "def f():\n    return x\n    ",
+    "line": 2,
+    "character": 4,
+    "ch": "\n",
+    "expected": "def f():\n    return x\n"
+  },
+  {
+    "name": "reindent: else stuck at body level snaps to its if",
+    "input": "if x:\n    pass\n    else:",
+    "line": 2,
+    "character": 9,
+    "ch": ":",
+    "expected": "if x:\n    pass\nelse:"
+  },
+  {
+    "name": "reindent: a mis-indented case aligns one level under match",
+    "input": "match x:\n    case 1:\n        pass\n  case 2:",
+    "line": 3,
+    "character": 9,
+    "ch": ":",
+    "expected": "match x:\n    case 1:\n        pass\n    case 2:"
+  },
+  {
+    "name": "reindent: an over-indented closing paren aligns to its opener",
+    "input": "x = foo(\n    a,\n      )",
+    "line": 2,
+    "character": 7,
+    "ch": ")",
+    "expected": "x = foo(\n    a,\n)"
+  },
+  {
+    "name": "crlf: indents correctly and preserves CRLF line endings",
+    "input": "def f():\r\n",
+    "line": 1,
+    "character": 0,
+    "ch": "\n",
+    "expected": "def f():\r\n    "
+  },
+  {
+    "name": "toggle: no edit when treesitterFormatter.indentOnType is false",
+    "input": "def f():\n",
+    "line": 1,
+    "character": 0,
+    "ch": "\n",
+    "expected": "def f():\n",
+    "config": { "indentOnType": false }
+  }
+]

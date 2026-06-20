@@ -657,6 +657,157 @@ async function runTests() {
     failed++;
   }
 
+  //
+  // ─── INDENT ORACLE (on-type indentation) ────────────────────
+  //
+  // Pure unit coverage of the indent resolver. Mirrors the e2e fixtures, but
+  // runs without a VS Code host. `null` means "no opinion" (the editor's own
+  // indent stands).
+  //
+  console.log('\n  Indent oracle (computeIndentColumns / computeLineReindent):');
+  const { computeIndentColumns, computeLineReindent } = require('./out/src/formatter/IndentResolver');
+  const I = 4;
+
+  // [code, line, expected]: indent (in space-columns) for the NEW line `line`.
+  const enterCases = [
+    ['def f():\n', 1, 4, 'indent after def header'],
+    ['if x:\n', 1, 4, 'indent after if header'],
+    ['class C:\n', 1, 4, 'indent after class header'],
+    ['x = {1: 2}\n', 1, 0, 'dict colon does not indent'],
+    ['a = b[1:2]\n', 1, 0, 'slice colon does not indent'],
+    ['f = lambda x: x\n', 1, 0, 'lambda colon does not indent'],
+    ['foo(\n', 1, 4, 'hanging indent inside open bracket'],
+    ['result = foo(arg1,\n', 1, 13, 'visual indent aligns after bracket'],
+    ['def f():\n    return x\n', 2, 0, 'dedent after a terminating return'],
+    ['class C:\n    def f():\n        return (\n            x\n)\n', 5, 4, 'dedent measures from the return line, not a mis-indented closer'],
+    ['class C:\n    def f():\n', 2, 8, 'nested block indents two levels'],
+    ['    x = 1\n', 1, 4, 'continues the previous indent'],
+    ['def g(\n    a,\n):\n', 3, 4, 'wrapped header body indents from header start'],
+    ['', 0, null, 'no opinion at start of file'],
+  ];
+  for (const [code, line, exp, name] of enterCases) {
+    const got = computeIndentColumns(ParserService.parse(code), code, line, I);
+    if (got === exp) { console.log(`  ✅ enter: ${name}`); passed++; }
+    else { console.error(`  ❌ enter: ${name} — got ${got}, expected ${exp}`); failed++; }
+  }
+
+  // [code, line, expected]: indent for the CURRENT line on ':' / closing bracket.
+  const reindentCases = [
+    ['if x:\n    pass\n        else:\n', 2, 0, 'over-indented else snaps to if'],
+    ['if x:\n    pass\n    else:\n', 2, 0, 'else stuck at body level snaps to if'],
+    ['try:\n    pass\n      except E:\n', 2, 0, 'over-indented except snaps to try'],
+    ['try:\n    pass\nexcept E:\n    pass\n   finally:\n', 4, 0, 'finally aligns to try'],
+    ['if a:\n    if b:\n        pass\n        else:\n', 3, 4, 'nested else binds to inner if'],
+    ['if a:\n    for i in x:\n        pass\nelse:\n', 3, 0, 'else at col 0 binds to outer if, not the for'],
+    ['match x:\n    case 1:\n        pass\n  case 2:\n', 3, 4, 'case aligns one level under match'],
+    ['x = foo(\n    a,\n      )\n', 2, 0, 'closing paren aligns to its opener line'],
+    ['x = {1: 2}\n', 0, null, 'a dict colon is not reindented'],
+    ['if x:\n    pass\n', 1, null, 'a body line is not reindented'],
+    ['class C:\n', 0, null, 'an opener header is not reindented'],
+  ];
+  for (const [code, line, exp, name] of reindentCases) {
+    const got = computeLineReindent(ParserService.parse(code), code, line, I);
+    if (got === exp) { console.log(`  ✅ reindent: ${name}`); passed++; }
+    else { console.error(`  ❌ reindent: ${name} — got ${got}, expected ${exp}`); failed++; }
+  }
+
+  //
+  // ─── INCREMENTAL PARSE INVARIANT ────────────────────────────
+  //
+  // The core correctness guarantee of incremental parsing: applying edits via
+  // tree.edit()+reparse must yield exactly the same tree as a full from-scratch
+  // parse. We assert S-expression equality after EVERY step of each edit script.
+  //
+  console.log('\n  Incremental parse invariant (incremental tree === fresh parse):');
+  const { toTreeEdit } = require('./out/src/parser/treeEdit');
+
+  const posAt = (str, off) => {
+    let line = 0, lastNl = -1;
+    for (let i = 0; i < off; i++) { if (str[i] === '\n') { line++; lastNl = i; } }
+    return { line, character: off - lastNl - 1 };
+  };
+  const makeChange = (oldText, offset, del, ins) => ({
+    rangeOffset: offset,
+    rangeLength: del,
+    text: ins,
+    range: { start: posAt(oldText, offset), end: posAt(oldText, offset + del) },
+  });
+
+  const editScripts = [
+    { name: 'build a function by appending', start: '', steps: [
+      [0, 0, 'def f():'], [8, 0, '\n    pass'], [8, 0, ' '] /* stray space after colon */,
+    ]},
+    { name: 'insert a line in the middle of a block', start: 'def f():\n    a = 1\n    return a', steps: [
+      [17, 0, '\n    b = 2'], // after "    a = 1"
+    ]},
+    { name: 'delete a range spanning lines', start: 'x = [\n    1,\n    2,\n]', steps: [
+      [5, 11, ''], // remove the two element lines
+    ]},
+    { name: 'rename an identifier mid-token', start: 'value = compute(value)', steps: [
+      [0, 5, 'result'], [/* after rename */ 17, 5, 'result'],
+    ]},
+    { name: 'CRLF document edits (whole-line units)', start: 'def f():\r\n    pass', steps: [
+      [17, 0, '\r\n    return 1'], [0, 0, 'import os\r\n\r\n\r\n'],
+    ]},
+    { name: 'type a dict then a comprehension', start: 'd = {}', steps: [
+      [5, 0, "'a': 1"], [0, 6, "items = [x for x in range(10)]"],
+    ]},
+  ];
+
+  let invariantOk = true;
+  for (const script of editScripts) {
+    let text = script.start;
+    let tree = ParserService.parse(text);
+    for (const [offset, del, ins] of script.steps) {
+      const change = makeChange(text, offset, del, ins);
+      text = text.slice(0, offset) + ins + text.slice(offset + del);
+      tree.edit(toTreeEdit(change));
+      tree = ParserService.parse(text, tree);
+      const fresh = ParserService.parse(text);
+      if (tree.rootNode.toString() !== fresh.rootNode.toString()) {
+        invariantOk = false;
+        console.error(`  ❌ ${script.name} — incremental tree diverged after edit ${JSON.stringify([offset, del, ins])}`);
+        console.error(`     incremental: ${tree.rootNode.toString()}`);
+        console.error(`     fresh:       ${fresh.rootNode.toString()}`);
+        break;
+      }
+    }
+    if (invariantOk) { console.log(`  ✅ ${script.name}`); }
+  }
+  if (invariantOk) { passed++; } else { failed++; }
+
+  // Multi-change events (multi-cursor edits, find/replace-all) deliver several
+  // changes at once. Mirrors IncrementalParser.onChange: build edits in original
+  // coords, apply them high-offset-first, and require a match with a fresh parse
+  // — proving correctness regardless of the order changes arrive in.
+  {
+    let text = 'a = 1\nb = 2\nc = 3';
+    let tree = ParserService.parse(text);
+    const edits = [
+      { offset: 0, del: 1, ins: 'alpha' },
+      { offset: 6, del: 1, ins: 'beta' },
+      { offset: 12, del: 1, ins: 'gamma' },
+    ];
+    const changes = edits.map((e) => makeChange(text, e.offset, e.del, e.ins));
+    for (const e of [...edits].sort((a, b) => b.offset - a.offset)) {
+      text = text.slice(0, e.offset) + e.ins + text.slice(e.offset + e.del);
+    }
+    for (const c of [...changes].sort((a, b) => b.rangeOffset - a.rangeOffset)) {
+      tree.edit(toTreeEdit(c));
+    }
+    tree = ParserService.parse(text, tree);
+    const fresh = ParserService.parse(text);
+    if (tree.rootNode.toString() === fresh.rootNode.toString()) {
+      console.log('  ✅ multi-change event (3 simultaneous edits) matches fresh parse');
+      passed++;
+    } else {
+      console.error('  ❌ multi-change event diverged from fresh parse');
+      console.error(`     incremental: ${tree.rootNode.toString()}`);
+      console.error(`     fresh:       ${fresh.rootNode.toString()}`);
+      failed++;
+    }
+  }
+
   console.log(`\n  ${passed} passed, ${failed} failed\n`);
   if (failed > 0) {
     process.exit(1);

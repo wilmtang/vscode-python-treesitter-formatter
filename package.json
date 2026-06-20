@@ -32,7 +32,17 @@
           "type": "number",
           "default": 88,
           "description": "Maximum line length. Bracketed constructs (calls, collections, parameter lists) that would exceed this width are wrapped one element per line. Common values: 79 (strict PEP-8), 88 (Black), 120 (PyCharm)."
+        },
+        "treesitterFormatter.indentOnType": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto-indent as you type, using the syntax tree: set the new line's indent on Enter (block openers, bracket continuations, dedent after return/raise/...), and re-align dedenting clauses (else/elif/except/finally/case) and closing-bracket lines. Requires 'editor.formatOnType' (enabled by default for Python by this extension)."
         }
+      }
+    },
+    "configurationDefaults": {
+      "[python]": {
+        "editor.formatOnType": true
       }
     }
   },
