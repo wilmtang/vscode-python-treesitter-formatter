@@ -182,11 +182,29 @@ To make this extension your default formatter for Python files so that it runs a
 2. Add the following configuration:
    ```json
    "[python]": {
-       "editor.defaultFormatter": "undefined_publisher.vscode-python-treesitter-formatter",
+       "editor.defaultFormatter": "wilmtang.vscode-python-treesitter-formatter",
        "editor.formatOnSave": true
    }
    ```
-*(Note: Replace `undefined_publisher` with the actual publisher name once you publish the extension to the marketplace).*
+*(The formatter's id is `<publisher>.<name>` — `wilmtang.vscode-python-treesitter-formatter` — as set in `package.json`.)*
+
+## 🧰 npm Scripts
+
+`package.json` is strict JSON and can't hold inline comments, so here's what each script does (run with `npm run <name>`):
+
+| Script | What it does |
+|---|---|
+| **`compile`** | Build the extension bundle into `dist/` (development build). Run before pressing F5. |
+| **`watch`** | Rebuild the bundle automatically on every save — the usual dev loop. |
+| **`package`** | Production build (minified, hidden source maps). This is the bundle that ships in the `.vsix`. |
+| **`vscode:prepublish`** | Lifecycle hook `vsce` runs automatically before packaging; it just calls `package`. Not run by hand. |
+| **`compile-tests`** | Compile all TypeScript (`src` + `test`) to `out/` with `tsc` — the tests execute against this output. |
+| **`watch-tests`** | Same as `compile-tests`, in watch mode. |
+| **`pretest`** | Lifecycle hook npm runs automatically before `test`; it just calls `compile-tests`. |
+| **`test`** | Run the fast standalone unit suite (`test_runner.js`) — no VS Code needed. `npm test` runs `pretest` first. |
+| **`lint`** | Lint the TypeScript in `src/` with ESLint. |
+| **`e2e-test`** | Compile + bundle, then launch a real headless VS Code instance and run the E2E suite inside it. |
+| **`vsce:package`** | Package the extension into an installable `.vsix`. |
 
 ## 🧪 Testing
 

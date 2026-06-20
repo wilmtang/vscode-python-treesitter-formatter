@@ -3,7 +3,7 @@
   "displayName": "Error-Tolerant Python Formatter",
   "description": "A PyCharm-style, tree-sitter based Python formatter resilient to syntax errors.",
   "version": "0.0.1",
-  "publisher": "antigravity",
+  "publisher": "wilmtang",
   "engines": {
     "vscode": "^1.80.0"
   },
@@ -45,10 +45,9 @@
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "npm run compile-tests",
     "test": "node test_runner.js",
-    "test:mocha": "npm run compile-tests && mocha out/test/formatter.test.js --timeout 15000",
     "lint": "eslint src --ext ts",
     "e2e-test": "npm run compile-tests && npm run compile && node out/test/runTest.js",
-    "vsce:package": "npx vsce package"
+    "vsce:package": "npx @vscode/vsce package"
   },
   "dependencies": {
     "@vscode/tree-sitter-wasm": "^0.3.1"

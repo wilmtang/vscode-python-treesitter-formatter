@@ -1,0 +1,40 @@
+# What ships in the .vsix. Without this file, vsce falls back to .gitignore —
+# which excludes dist/ (the compiled extension), producing a broken package.
+#
+# We keep: package.json, README.md, dist/** (bundled extension + the 3 core
+# wasm files), and the tree-sitter-wasm JS loader. Everything else is dev-only.
+
+.vscode/**
+.vscode-test/**
+.agents/**
+.git/**
+out/**
+src/**
+test/**
+**/*.ts
+**/*.map
+test_runner.js
+webpack.config.js
+tsconfig.json
+.gitignore
+.eslintrc*
+package-lock.json
+
+# Trim the unused language grammars from the bundled tree-sitter dependency.
+# This extension only formats Python; the Python + core wasm are loaded from
+# dist/wasm at runtime, so none of these are needed.
+node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-bash.wasm
+node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-c-sharp.wasm
+node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-cpp.wasm
+node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-css.wasm
+node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-go.wasm
+node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-ini.wasm
+node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-java.wasm
+node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-javascript.wasm
+node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-php.wasm
+node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-powershell.wasm
+node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-regex.wasm
+node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-ruby.wasm
+node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-rust.wasm
+node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-tsx.wasm
+node_modules/@vscode/tree-sitter-wasm/wasm/tree-sitter-typescript.wasm
