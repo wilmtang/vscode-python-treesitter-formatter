@@ -10,15 +10,20 @@ A local, deterministic, PyCharm-style Python formatter for VS Code. It uses Tree
 - **Never corrupts your code**: anything the formatter doesn't understand is preserved verbatim, and a re-parse safety net falls back to your original text if formatting would ever introduce a syntax error. Backed by property tests (*valid stays valid*, *idempotent*, *never worsens broken code*).
 - **Local, deterministic, WASM-powered**: built on `@vscode/tree-sitter-wasm` — fast, fully offline, with zero external Python dependencies (no `black`, `autopep8`, or `yapf` needed).
 
-## ⚖️ How It Compares to Black
+## ⚖️ How It Compares
 
-[Black](https://black.readthedocs.io/) is the gold standard for formatting Python that **already parses**. This formatter targets the case Black refuses — code that doesn't parse — and is intentionally more conservative on valid code. The two are complementary.
+### The niche: formatting code that doesn't parse
 
-> The **This formatter** column is real output from the test suite. The **Black** column reflects Black's documented, standard behavior.
+Every mainstream Python formatter requires the file to **parse** first. If it doesn't, they refuse and change nothing:
 
-### ✅ What this formatter can do that Black can't
+| Tool (VS Code extension) | On broken / unparseable code |
+|---|---|
+| **Black** (`ms-python.black-formatter`) | Refuses: `error: cannot format …: Cannot parse` — changes nothing |
+| **Ruff format** (`charliermarsh.ruff`) | Black-compatible; same deal — needs valid syntax |
+| **autopep8** (`ms-python.autopep8`) | Fixes style / some indentation **only if the file still tokenizes**; bails on real syntax errors |
+| **yapf** | Refuses unparseable code |
 
-Black builds a strict syntax tree first; if the file doesn't parse it **refuses and changes nothing** (`error: cannot format …: Cannot parse`). Because Tree-sitter recovers from errors, this formatter formats what it can and repairs what it safely can.
+Because Tree-sitter recovers from errors, **this formatter is the exception** — it formats what it can and repairs what it safely can:
 
 **Reindent invalid Python** (inconsistent indentation is an `IndentationError`, so the input below does not parse):
 
@@ -51,9 +56,9 @@ y=3                             y=3
 ```
 > **Black:** ❌ refuses the entire file — `Cannot parse`.
 
-### ⬛ What Black can do that this formatter can't
+### Where Black does more
 
-On code that already parses, Black does more. These are real differences:
+On code that already parses, Black does more than this formatter — these are real differences. (The **This formatter** column is real output from the test suite; the **Black** column reflects Black's documented, standard behavior.)
 
 | Feature | Input | This formatter | Black |
 |---|---|---|---|
